@@ -1,17 +1,16 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabase';
 import {
     Leaf, ArrowRight, User, Activity, Scale,
     Coffee, Utensils, Moon, Sun, Plus, LogOut, Loader2,
-    Dumbbell, ShieldCheck, AlertCircle, ChevronLeft, Settings, History, ChevronDown
+    Dumbbell, ShieldCheck, AlertCircle, ChevronLeft,
+    Settings, History, ChevronDown, Search, X
 } from 'lucide-react';
 
-// --- ВСПОМОГАТЕЛЬНЫЕ КОМПОНЕНТЫ ---
-
-const MealCard = ({ title, icon, calories, color, bg }) => {
+const MealCard = ({ title, icon, calories, color, bg, onClick }) => {
     const IconComponent = icon;
     return (
-        <div className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100 hover:shadow-lg hover:border-emerald-100 transition-all group cursor-pointer relative overflow-hidden">
+        <div onClick={onClick} className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100 hover:shadow-lg hover:border-emerald-100 transition-all group cursor-pointer relative overflow-hidden">
             <div className={`absolute top-0 right-0 w-20 h-20 ${bg} opacity-10 rounded-bl-[3rem] transition-all group-hover:scale-150`}></div>
             <div className="flex justify-between items-start mb-4 relative z-10">
                 <div className={`p-3.5 rounded-2xl ${color} text-white shadow-md shadow-emerald-100 group-hover:scale-110 transition-transform duration-300`}>
@@ -30,7 +29,236 @@ const MealCard = ({ title, icon, calories, color, bg }) => {
     );
 };
 
-// --- 1. ЭКРАН АВТОРИЗАЦИИ ---
+const FoodModal = ({ session, mealType, onClose, onFoodAdded }) => {
+    const [activeTab, setActiveTab] = useState('my');
+    const [search, setSearch] = useState('');
+    const [foods, setFoods] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [selectedFood, setSelectedFood] = useState(null);
+    const [grams, setGrams] = useState(100);
+    const [isCreating, setIsCreating] = useState(false);
+    const [newFood, setNewFood] = useState({ name: '', calories: '', proteins: '', fats: '', carbs: '' });
+
+    useEffect(() => {
+        let isMounted = true;
+        const loadFoods = async () => {
+            setLoading(true);
+            let query = supabase.from('food_items').select('*');
+
+            if (activeTab === 'my') {
+                query = query.eq('created_by_user_id', session.user.id);
+            } else {
+                query = query.eq('is_public_plan', true);
+            }
+
+            if (search) {
+                query = query.ilike('name', `%${search}%`);
+            }
+
+            const { data } = await query;
+            if (isMounted) {
+                setFoods(data || []);
+                setLoading(false);
+            }
+        };
+
+        loadFoods();
+        return () => { isMounted = false; };
+    }, [activeTab, search, session.user.id]);
+
+    const handleAddEntry = async () => {
+        if (!selectedFood) return;
+
+        const { error } = await supabase.from('food_entries').insert({
+            user_id: session.user.id,
+            food_item_id: selectedFood.food_item_id,
+            meal_type: mealType,
+            quantity_grams: parseFloat(grams),
+            date_time: new Date().toISOString()
+        });
+
+        if (!error) {
+            onFoodAdded();
+            onClose();
+        } else {
+            alert(error.message);
+        }
+    };
+
+    const handleCreateFood = async (e) => {
+        e.preventDefault();
+        const { error } = await supabase.from('food_items').insert({
+            name: newFood.name,
+            calories: parseFloat(newFood.calories),
+            proteins: parseFloat(newFood.proteins || 0),
+            fats: parseFloat(newFood.fats || 0),
+            carbohydrates: parseFloat(newFood.carbs || 0),
+            created_by_user_id: session.user.id,
+            is_custom_dish: true,
+            is_public_plan: false
+        });
+
+        if (!error) {
+            setIsCreating(false);
+            setActiveTab('my');
+        } else {
+            alert(error.message);
+        }
+    };
+
+    const getMealName = (type) => {
+        switch (type) {
+            case 'breakfast': return 'Сніданок';
+            case 'lunch': return 'Обід';
+            case 'dinner': return 'Вечеря';
+            case 'snack': return 'Перекус';
+            default: return '';
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 animate-fade-in">
+            <div className="bg-white w-full max-w-lg h-[90vh] sm:h-auto sm:max-h-[85vh] rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl flex flex-col overflow-hidden">
+
+                <div className="bg-white p-6 border-b border-slate-100 flex justify-between items-center shrink-0">
+                    <div>
+                        <h3 className="text-xl font-bold text-slate-800">Додати у {getMealName(mealType)}</h3>
+                        <p className="text-xs text-slate-400">Виберіть страву зі списку</p>
+                    </div>
+                    <button onClick={onClose} className="p-2 bg-slate-50 rounded-full text-slate-400 hover:bg-slate-100 transition">
+                        <X size={20} />
+                    </button>
+                </div>
+
+                {!isCreating && !selectedFood && (
+                    <div className="flex-1 flex flex-col overflow-hidden">
+                        <div className="p-4 bg-white shrink-0">
+                            <div className="flex bg-slate-100 p-1 rounded-xl mb-4">
+                                <button onClick={() => setActiveTab('my')} className={`flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all ${activeTab === 'my' ? 'bg-white shadow-sm text-emerald-600' : 'text-slate-400'}`}>Мої страви</button>
+                                <button onClick={() => setActiveTab('public')} className={`flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all ${activeTab === 'public' ? 'bg-white shadow-sm text-emerald-600' : 'text-slate-400'}`}>База тренерів</button>
+                            </div>
+                            <div className="relative">
+                                <Search className="absolute left-4 top-3.5 text-slate-400" size={18} />
+                                <input
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                    placeholder="Пошук їжі..."
+                                    className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:border-emerald-200 transition-all text-sm"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                            {loading ? <div className="flex justify-center py-10"><Loader2 className="animate-spin text-emerald-500" /></div> :
+                                foods.length === 0 ? (
+                                    <div className="text-center py-10">
+                                        <p className="text-slate-400 mb-4">Нічого не знайдено</p>
+                                        <button onClick={() => setIsCreating(true)} className="text-emerald-600 font-semibold text-sm hover:underline">+ Створити свою страву</button>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <button onClick={() => setIsCreating(true)} className="w-full py-3 border-2 border-dashed border-emerald-200 text-emerald-600 rounded-xl font-semibold text-sm mb-2 hover:bg-emerald-50 transition">+ Створити нову страву</button>
+                                        {foods.map(food => (
+                                            <div key={food.food_item_id} onClick={() => setSelectedFood(food)} className="bg-white p-4 rounded-xl border border-slate-100 hover:border-emerald-200 cursor-pointer transition-all flex justify-between items-center shadow-sm">
+                                                <div>
+                                                    <h4 className="font-bold text-slate-700">{food.name}</h4>
+                                                    <div className="flex items-center gap-3 mt-1">
+                                                        <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">{food.calories} ккал</span>
+                                                        <span className="text-xs text-slate-400">на 100г</span>
+                                                    </div>
+                                                </div>
+                                                <div className="bg-emerald-50 p-2 rounded-lg text-emerald-600">
+                                                    <Plus size={18} />
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </>
+                                )
+                            }
+                        </div>
+                    </div>
+                )}
+
+                {selectedFood && (
+                    <div className="p-6 flex-1 flex flex-col justify-between bg-white overflow-y-auto">
+                        <div>
+                            <button onClick={() => setSelectedFood(null)} className="flex items-center text-slate-400 text-sm mb-6 hover:text-slate-600"><ChevronLeft size={16} className="mr-1" /> Назад до списку</button>
+                            <h2 className="text-3xl font-bold text-slate-800 mb-2">{selectedFood.name}</h2>
+
+                            <div className="grid grid-cols-3 gap-3 mb-8 mt-6">
+                                <div className="bg-orange-50 p-3 rounded-2xl text-center border border-orange-100">
+                                    <span className="block text-xl font-bold text-orange-500">{Math.round(selectedFood.calories * (grams / 100))}</span>
+                                    <span className="text-xs font-bold text-orange-300 uppercase tracking-wide">Ккал</span>
+                                </div>
+                                <div className="bg-blue-50 p-3 rounded-2xl text-center border border-blue-100">
+                                    <span className="block text-xl font-bold text-blue-500">{Math.round((selectedFood.proteins || 0) * (grams / 100))}г</span>
+                                    <span className="text-xs font-bold text-blue-300 uppercase tracking-wide">Білки</span>
+                                </div>
+                                <div className="bg-yellow-50 p-3 rounded-2xl text-center border border-yellow-100">
+                                    <span className="block text-xl font-bold text-yellow-500">{Math.round((selectedFood.fats || 0) * (grams / 100))}г</span>
+                                    <span className="text-xs font-bold text-yellow-300 uppercase tracking-wide">Жири</span>
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-50 p-6 rounded-[1.5rem] border border-slate-100">
+                                <label className="block text-sm font-bold text-slate-700 mb-4 text-center uppercase tracking-wider">Вага порції (грами)</label>
+                                <div className="flex items-center justify-center gap-6">
+                                    <button onClick={() => setGrams(prev => Math.max(0, prev - 10))} className="w-10 h-10 rounded-full bg-white shadow-sm border border-slate-200 flex items-center justify-center text-slate-500 active:scale-90 transition text-xl font-bold">-</button>
+                                    <input
+                                        type="number"
+                                        value={grams}
+                                        onChange={(e) => setGrams(e.target.value)}
+                                        className="w-24 bg-transparent text-4xl font-extrabold text-center outline-none text-slate-800"
+                                    />
+                                    <button onClick={() => setGrams(prev => parseFloat(prev) + 10)} className="w-10 h-10 rounded-full bg-emerald-500 shadow-lg shadow-emerald-200 flex items-center justify-center text-white active:scale-90 transition text-xl font-bold">+</button>
+                                </div>
+                            </div>
+                        </div>
+                        <button onClick={handleAddEntry} className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-emerald-200 hover:bg-emerald-600 transition-all mt-6 text-lg">
+                            Додати у щоденник
+                        </button>
+                    </div>
+                )}
+
+                {isCreating && (
+                    <div className="p-6 flex-1 overflow-y-auto bg-white">
+                        <button onClick={() => setIsCreating(false)} className="flex items-center text-slate-400 text-sm mb-6 hover:text-slate-600"><ChevronLeft size={16} className="mr-1" /> Назад</button>
+                        <h3 className="text-2xl font-bold text-slate-800 mb-6">Створення страви</h3>
+                        <form onSubmit={handleCreateFood} className="space-y-5">
+                            <div>
+                                <label className="text-xs font-bold text-slate-400 uppercase ml-1">Назва продукту</label>
+                                <input required value={newFood.name} onChange={e => setNewFood({ ...newFood, name: e.target.value })} className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none focus:border-emerald-300 focus:bg-white transition-all font-medium" placeholder="Наприклад: Гречка" />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-xs font-bold text-slate-400 uppercase ml-1">Ккал (на 100г)</label>
+                                    <input type="number" required value={newFood.calories} onChange={e => setNewFood({ ...newFood, calories: e.target.value })} className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none focus:border-emerald-300 focus:bg-white transition-all font-bold text-slate-700" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-400 uppercase ml-1">Білки</label>
+                                    <input type="number" value={newFood.proteins} onChange={e => setNewFood({ ...newFood, proteins: e.target.value })} className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none focus:border-emerald-300 focus:bg-white transition-all" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-400 uppercase ml-1">Жири</label>
+                                    <input type="number" value={newFood.fats} onChange={e => setNewFood({ ...newFood, fats: e.target.value })} className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none focus:border-emerald-300 focus:bg-white transition-all" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-400 uppercase ml-1">Вуглеводи</label>
+                                    <input type="number" value={newFood.carbs} onChange={e => setNewFood({ ...newFood, carbs: e.target.value })} className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none focus:border-emerald-300 focus:bg-white transition-all" />
+                                </div>
+                            </div>
+                            <button className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-emerald-200 hover:bg-emerald-600 transition-all mt-4 text-lg">
+                                Зберегти
+                            </button>
+                        </form>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
 const AuthPage = () => {
     const [isLogin, setIsLogin] = useState(true);
     const [email, setEmail] = useState('');
@@ -58,7 +286,7 @@ const AuthPage = () => {
 
             if (error) {
                 if (error.message.includes("already registered") || error.status === 400) {
-                    throw new Error("Эта почта уже зарегистрирована. Попробуйте войти.");
+                    throw new Error("Ця пошта вже зареєстрована. Спробуйте увійти.");
                 }
                 throw error;
             }
@@ -78,12 +306,12 @@ const AuthPage = () => {
                     </div>
                 </div>
                 <h1 className="text-3xl font-bold text-center text-slate-800 mb-2">FatBeaches</h1>
-                <p className="text-center text-slate-400 mb-8 text-sm">Твой путь к идеальной форме</p>
+                <p className="text-center text-slate-400 mb-8 text-sm">Твій шлях до ідеальної форми</p>
 
                 <div className="flex bg-slate-100 p-1.5 rounded-2xl mb-6 relative">
                     <div className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-white rounded-xl shadow-sm transition-all duration-300 ease-out ${isLogin ? 'left-1.5' : 'left-[calc(50%+1.5px)]'}`}></div>
-                    <button onClick={() => setIsLogin(true)} className={`flex-1 py-3 rounded-xl text-sm font-semibold z-10 transition-colors duration-300 ${isLogin ? 'text-emerald-700' : 'text-slate-400 hover:text-slate-600'}`}>Вход</button>
-                    <button onClick={() => setIsLogin(false)} className={`flex-1 py-3 rounded-xl text-sm font-semibold z-10 transition-colors duration-300 ${!isLogin ? 'text-emerald-700' : 'text-slate-400 hover:text-slate-600'}`}>Регистрация</button>
+                    <button onClick={() => setIsLogin(true)} className={`flex-1 py-3 rounded-xl text-sm font-semibold z-10 transition-colors duration-300 ${isLogin ? 'text-emerald-700' : 'text-slate-400 hover:text-slate-600'}`}>Вхід</button>
+                    <button onClick={() => setIsLogin(false)} className={`flex-1 py-3 rounded-xl text-sm font-semibold z-10 transition-colors duration-300 ${!isLogin ? 'text-emerald-700' : 'text-slate-400 hover:text-slate-600'}`}>Реєстрація</button>
                 </div>
 
                 <form onSubmit={handleAuth} className="space-y-4">
@@ -91,7 +319,7 @@ const AuthPage = () => {
                     <input type="password" placeholder="Пароль" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-4 rounded-2xl bg-slate-50 border border-slate-100 focus:border-emerald-200 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all font-medium text-slate-700 placeholder:text-slate-400" required />
                     {msg && <div className="text-sm text-center p-3 rounded-xl bg-red-50 text-red-500 border border-red-100">{msg}</div>}
                     <button disabled={loading} className="w-full bg-emerald-500 hover:bg-emerald-600 text-white py-4 rounded-2xl font-bold transition-all shadow-lg shadow-emerald-200 hover:shadow-emerald-300 active:scale-[0.98] flex justify-center items-center gap-2">
-                        {loading ? <Loader2 className="animate-spin" /> : (isLogin ? 'Продолжить' : 'Создать аккаунт')}
+                        {loading ? <Loader2 className="animate-spin" /> : (isLogin ? 'Продовжити' : 'Створити акаунт')}
                     </button>
                 </form>
 
@@ -106,7 +334,6 @@ const AuthPage = () => {
     );
 };
 
-// --- 2. ВЫБОР РОЛИ ---
 const RoleSelection = ({ session, onRoleSelected }) => {
     const selectRole = async (role) => {
         const { error } = await supabase
@@ -120,16 +347,16 @@ const RoleSelection = ({ session, onRoleSelected }) => {
     return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 font-sans">
             <div className="max-w-2xl w-full animate-fade-in">
-                <h2 className="text-3xl font-bold text-center text-slate-800 mb-2">Добро пожаловать!</h2>
-                <p className="text-center text-slate-400 mb-10">Выберите, как вы хотите использовать FatBeaches</p>
+                <h2 className="text-3xl font-bold text-center text-slate-800 mb-2">Ласкаво просимо!</h2>
+                <p className="text-center text-slate-400 mb-10">Оберіть, як ви хочете використовувати FatBeaches</p>
 
                 <div className="grid md:grid-cols-2 gap-6">
                     <button onClick={() => selectRole('customer')} className="bg-white p-8 rounded-[2rem] shadow-sm border border-slate-100 hover:border-emerald-400 hover:shadow-xl transition-all group text-left relative overflow-hidden">
                         <div className="bg-emerald-50 w-14 h-14 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
                             <User className="w-8 h-8 text-emerald-600" />
                         </div>
-                        <h3 className="text-xl font-bold text-slate-800 mb-2">Я Пользователь</h3>
-                        <p className="text-slate-400 text-sm">Хочу следить за питанием, тренировками и достичь своей цели.</p>
+                        <h3 className="text-xl font-bold text-slate-800 mb-2">Я Користувач</h3>
+                        <p className="text-slate-400 text-sm">Хочу стежити за харчуванням, тренуваннями та досягти своєї мети.</p>
                     </button>
 
                     <button onClick={() => selectRole('trainer')} className="bg-white p-8 rounded-[2rem] shadow-sm border border-slate-100 hover:border-blue-400 hover:shadow-xl transition-all group text-left relative overflow-hidden">
@@ -137,7 +364,7 @@ const RoleSelection = ({ session, onRoleSelected }) => {
                             <Dumbbell className="w-8 h-8 text-blue-600" />
                         </div>
                         <h3 className="text-xl font-bold text-slate-800 mb-2">Я Тренер</h3>
-                        <p className="text-slate-400 text-sm">Хочу создавать планы тренировок и помогать другим.</p>
+                        <p className="text-slate-400 text-sm">Хочу створювати плани тренувань та допомагати іншим.</p>
                     </button>
                 </div>
             </div>
@@ -145,7 +372,6 @@ const RoleSelection = ({ session, onRoleSelected }) => {
     );
 };
 
-// --- 3. ТРЕНЕР: ВЕРИФИКАЦИЯ ---
 const TrainerVerification = ({ session, onSubmitted, onBack }) => {
     const [details, setDetails] = useState('');
     const [loading, setLoading] = useState(false);
@@ -173,16 +399,16 @@ const TrainerVerification = ({ session, onSubmitted, onBack }) => {
                     <div className="bg-blue-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
                         <ShieldCheck className="w-8 h-8 text-blue-600" />
                     </div>
-                    <h2 className="text-2xl font-bold text-slate-800">Верификация</h2>
-                    <p className="text-slate-400 mt-2 text-sm">Подтвердите квалификацию тренера.</p>
+                    <h2 className="text-2xl font-bold text-slate-800">Верифікація</h2>
+                    <p className="text-slate-400 mt-2 text-sm">Підтвердіть кваліфікацію тренера.</p>
                 </div>
                 <form onSubmit={submitApplication}>
                     <textarea
                         value={details} onChange={e => setDetails(e.target.value)}
                         className="w-full p-4 rounded-2xl bg-slate-50 border border-slate-200 focus:border-blue-400 outline-none h-40 resize-none text-slate-700 mb-6"
-                        placeholder="Ваш опыт, сертификаты..." required />
+                        placeholder="Ваш досвід, сертифікати..." required />
                     <button disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-bold transition-all flex justify-center gap-2">
-                        {loading ? <Loader2 className="animate-spin" /> : 'Отправить'}
+                        {loading ? <Loader2 className="animate-spin" /> : 'Відправити'}
                     </button>
                 </form>
             </div>
@@ -194,8 +420,8 @@ const TrainerPending = () => (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 font-sans text-center">
         <div className="max-w-md bg-white p-10 rounded-[2rem] shadow-xl">
             <AlertCircle className="w-16 h-16 text-yellow-500 mx-auto mb-6" />
-            <h2 className="text-2xl font-bold text-slate-800 mb-2">Заявка на рассмотрении</h2>
-            <p className="text-slate-500 mb-8">Администратор проверит ваши данные. Ожидайте.</p>
+            <h2 className="text-2xl font-bold text-slate-800 mb-2">Заявка на розгляді</h2>
+            <p className="text-slate-500 mb-8">Адміністратор перевірить ваші дані. Очікуйте.</p>
             <button onClick={() => supabase.auth.signOut()} className="text-slate-400 hover:text-red-500 font-medium flex items-center justify-center gap-2 mx-auto">
                 <LogOut size={18} /> Выйти
             </button>
@@ -203,7 +429,6 @@ const TrainerPending = () => (
     </div>
 );
 
-// --- 4. АНКЕТА ПОЛЬЗОВАТЕЛЯ (ПРОФИЛЬ) ---
 const ProfileSetup = ({ session, onComplete, onBack, initialData }) => {
     const [loading, setLoading] = useState(false);
     const [formData, setFormData] = useState(initialData || {
@@ -227,14 +452,16 @@ const ProfileSetup = ({ session, onComplete, onBack, initialData }) => {
 
         const updates = {
             user_id: session.user.id,
-            age: a, weight_kg: w, height_cm: h, gender: formData.gender, goal: formData.goal,
-            bmr: Math.round(bmr), daily_calories_goal: calories
+            age: a,
+            weight_kg: w,
+            height_cm: h,
+            gender: formData.gender,
+            goal: formData.goal,
+            bmr: Math.round(bmr),
+            daily_calories_goal: calories
         };
 
-        // ИСПРАВЛЕНИЕ: Добавляем onConflict: 'user_id', чтобы при обновлении не было ошибки дубликата
-        const { error } = await supabase
-            .from('user_profiles')
-            .upsert(updates, { onConflict: 'user_id' });
+        const { error } = await supabase.from('user_profiles').upsert(updates, { onConflict: 'user_id' });
 
         if (!error) onComplete();
         else alert(error.message);
@@ -250,47 +477,47 @@ const ProfileSetup = ({ session, onComplete, onBack, initialData }) => {
                     </button>
                 )}
                 <div className="mb-8 text-center">
-                    <h2 className="text-2xl font-bold text-slate-800 mb-2">{initialData ? 'Редактировать' : 'Настройка'} профиля 👤</h2>
-                    <p className="text-slate-400">Заполните данные для расчета калорий</p>
+                    <h2 className="text-2xl font-bold text-slate-800 mb-2">{initialData ? 'Редагувати' : 'Налаштування'} профілю 👤</h2>
+                    <p className="text-slate-400">Заповніть дані для розрахунку калорій</p>
                 </div>
                 <form onSubmit={handleSubmit} className="space-y-6">
                     <div className="grid grid-cols-2 gap-4">
                         <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 focus-within:border-emerald-400 focus-within:bg-white transition-all">
-                            <label className="block text-xs font-bold text-emerald-600 uppercase mb-1">Возраст</label>
+                            <label className="block text-xs font-bold text-emerald-600 uppercase mb-1">Вік</label>
                             <input type="number" required placeholder="25" value={formData.age} onChange={e => setFormData({ ...formData, age: e.target.value })} className="w-full bg-transparent outline-none font-bold text-slate-700 text-lg" />
                         </div>
                         <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 focus-within:border-emerald-400 focus-within:bg-white transition-all">
-                            <label className="block text-xs font-bold text-emerald-600 uppercase mb-1">Рост (см)</label>
+                            <label className="block text-xs font-bold text-emerald-600 uppercase mb-1">Зріст (см)</label>
                             <input type="number" required placeholder="175" value={formData.height_cm} onChange={e => setFormData({ ...formData, height_cm: e.target.value })} className="w-full bg-transparent outline-none font-bold text-slate-700 text-lg" />
                         </div>
                     </div>
                     <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 focus-within:border-emerald-400 focus-within:bg-white transition-all">
-                        <label className="block text-xs font-bold text-emerald-600 uppercase mb-1">Вес (кг)</label>
+                        <label className="block text-xs font-bold text-emerald-600 uppercase mb-1">Вага (кг)</label>
                         <input type="number" required placeholder="70.5" step="0.1" value={formData.weight_kg} onChange={e => setFormData({ ...formData, weight_kg: e.target.value })} className="w-full bg-transparent outline-none font-bold text-slate-700 text-lg" />
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-400 uppercase ml-2">Пол</label>
+                            <label className="text-xs font-bold text-slate-400 uppercase ml-2">Стать</label>
                             <div className="relative">
                                 <select value={formData.gender} onChange={e => setFormData({ ...formData, gender: e.target.value })} className="w-full p-4 rounded-2xl bg-slate-50 outline-none font-medium text-slate-700 cursor-pointer border border-slate-100 appearance-none">
-                                    <option value="female">Женщина</option>
-                                    <option value="male">Мужчина</option>
+                                    <option value="female">Жінка</option>
+                                    <option value="male">Чоловік</option>
                                 </select>
                             </div>
                         </div>
                         <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-400 uppercase ml-2">Цель</label>
+                            <label className="text-xs font-bold text-slate-400 uppercase ml-2">Ціль</label>
                             <div className="relative">
                                 <select value={formData.goal} onChange={e => setFormData({ ...formData, goal: e.target.value })} className="w-full p-4 rounded-2xl bg-slate-50 outline-none font-medium text-slate-700 cursor-pointer border border-slate-100 appearance-none">
-                                    <option value="lose_weight">Похудеть</option>
+                                    <option value="lose_weight">Схуднути</option>
                                     <option value="maintain">Форма</option>
-                                    <option value="gain_muscle">Масса</option>
+                                    <option value="gain_muscle">Маса</option>
                                 </select>
                             </div>
                         </div>
                     </div>
                     <button disabled={loading} className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-emerald-200 hover:bg-emerald-600 transition-all mt-4 flex justify-center items-center gap-2">
-                        {loading ? <Loader2 className="animate-spin" /> : <>{initialData ? 'Сохранить' : 'Готово'} <ArrowRight size={20} /></>}
+                        {loading ? <Loader2 className="animate-spin" /> : <>{initialData ? 'Зберегти' : 'Готово'} <ArrowRight size={20} /></>}
                     </button>
                 </form>
             </div>
@@ -298,10 +525,46 @@ const ProfileSetup = ({ session, onComplete, onBack, initialData }) => {
     );
 };
 
-// --- 5. ГЛАВНЫЙ ЭКРАН (DASHBOARD) ---
 const Dashboard = ({ session, profile, onEditProfile }) => {
     const [menuOpen, setMenuOpen] = useState(false);
+    const [showFoodModal, setShowFoodModal] = useState(false);
+    const [selectedMeal, setSelectedMeal] = useState(null);
+    const [consumedCalories, setConsumedCalories] = useState(0);
+    const [mealStats, setMealStats] = useState({ breakfast: 0, lunch: 0, dinner: 0, snack: 0 });
+    const [updateTrigger, setUpdateTrigger] = useState(0);
     const menuRef = useRef(null);
+
+    useEffect(() => {
+        let isMounted = true;
+        const loadCalories = async () => {
+            const today = new Date().toISOString().split('T')[0];
+            const { data } = await supabase
+                .from('food_entries')
+                .select('quantity_grams, meal_type, food_items(calories)')
+                .eq('user_id', session.user.id)
+                .gte('date_time', `${today}T00:00:00`)
+                .lte('date_time', `${today}T23:59:59`);
+
+            if (data && isMounted) {
+                let total = 0;
+                const stats = { breakfast: 0, lunch: 0, dinner: 0, snack: 0 };
+
+                data.forEach(entry => {
+                    const cals = Math.round(entry.food_items.calories * (entry.quantity_grams / 100));
+                    if (stats[entry.meal_type] !== undefined) {
+                        stats[entry.meal_type] += cals;
+                    }
+                    total += cals;
+                });
+
+                setConsumedCalories(total);
+                setMealStats(stats);
+            }
+        };
+
+        loadCalories();
+        return () => { isMounted = false; };
+    }, [session.user.id, updateTrigger]);
 
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -313,9 +576,13 @@ const Dashboard = ({ session, profile, onEditProfile }) => {
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
+    const openFoodModal = (mealType) => {
+        setSelectedMeal(mealType);
+        setShowFoodModal(true);
+    };
+
     return (
         <div className="min-h-screen bg-slate-50 pb-24 font-sans animate-fade-in">
-            {/* Header */}
             <header className="bg-white px-6 pt-6 pb-8 rounded-b-[3rem] shadow-sm mb-8 relative z-20">
                 <div className="flex justify-between items-center mb-6">
                     <div className="flex items-center gap-3">
@@ -323,12 +590,11 @@ const Dashboard = ({ session, profile, onEditProfile }) => {
                             <User size={20} />
                         </div>
                         <div>
-                            <h1 className="text-lg font-bold text-slate-800 leading-tight">Привет!</h1>
-                            <p className="text-xs text-slate-400 font-medium">Хорошего дня</p>
+                            <h1 className="text-lg font-bold text-slate-800 leading-tight">Привіт!</h1>
+                            <p className="text-xs text-slate-400 font-medium">Гарного дня</p>
                         </div>
                     </div>
 
-                    {/* User Dropdown */}
                     <div className="relative" ref={menuRef}>
                         <button onClick={() => setMenuOpen(!menuOpen)} className="flex items-center gap-2 bg-slate-50 py-2 px-3 rounded-full hover:bg-slate-100 transition-colors border border-slate-100">
                             <span className="text-sm font-semibold text-slate-700">{session.user.user_metadata.name || session.user.email.split('@')[0]}</span>
@@ -339,16 +605,16 @@ const Dashboard = ({ session, profile, onEditProfile }) => {
                             <div className="absolute right-0 top-12 w-56 bg-white rounded-2xl shadow-xl border border-slate-100 p-2 animate-fade-in z-50">
                                 <div className="p-2">
                                     <button onClick={() => onEditProfile()} className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 text-slate-600 text-sm font-medium transition-colors text-left">
-                                        <Settings size={18} className="text-emerald-500" /> Настройки профиля
+                                        <Settings size={18} className="text-emerald-500" /> Налаштування профілю
                                     </button>
                                     <button className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 text-slate-600 text-sm font-medium transition-colors text-left">
-                                        <History size={18} className="text-blue-500" /> История тренировок
+                                        <History size={18} className="text-blue-500" /> Історія тренувань
                                     </button>
                                 </div>
                                 <div className="h-px bg-slate-50 my-1"></div>
                                 <div className="p-2">
                                     <button onClick={() => supabase.auth.signOut()} className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-red-50 text-red-500 text-sm font-medium transition-colors text-left">
-                                        <LogOut size={18} /> Выйти
+                                        <LogOut size={18} /> Вийти
                                     </button>
                                 </div>
                             </div>
@@ -356,38 +622,40 @@ const Dashboard = ({ session, profile, onEditProfile }) => {
                     </div>
                 </div>
 
-                {/* Calories Card */}
                 <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 text-white p-7 rounded-[2.5rem] shadow-xl shadow-emerald-200 relative overflow-hidden">
                     <div className="absolute -right-10 -top-10 w-48 h-48 bg-white opacity-10 rounded-full blur-3xl"></div>
                     <div className="absolute -left-10 bottom-0 w-32 h-32 bg-emerald-300 opacity-20 rounded-full blur-2xl"></div>
                     <div className="relative z-10 flex justify-between items-end mb-6">
                         <div>
-                            <p className="text-emerald-100 text-sm font-medium mb-1 flex items-center gap-2"><Activity size={16} /> Цель на сегодня</p>
-                            <h2 className="text-5xl font-bold tracking-tight">{profile?.daily_calories_goal || 2000}</h2>
+                            <p className="text-emerald-100 text-sm font-medium mb-1 flex items-center gap-2"><Activity size={16} /> З'їдено сьогодні</p>
+                            <h2 className="text-5xl font-bold tracking-tight">{consumedCalories}</h2>
                         </div>
                         <div className="text-right bg-white/10 p-3 rounded-2xl backdrop-blur-sm">
-                            <p className="text-emerald-50 text-xs mb-1">Осталось</p>
+                            <p className="text-emerald-50 text-xs mb-1">Ціль</p>
                             <p className="font-bold text-lg">{profile?.daily_calories_goal || 2000}</p>
                         </div>
                     </div>
                     <div className="relative">
+                        <div className="flex justify-between text-xs text-emerald-100 mb-2 font-medium">
+                            <span>Залишилось: {Math.max(0, (profile?.daily_calories_goal || 2000) - consumedCalories)}</span>
+                            <span>{Math.round((consumedCalories / (profile?.daily_calories_goal || 2000)) * 100)}%</span>
+                        </div>
                         <div className="bg-emerald-800/30 h-3 rounded-full overflow-hidden backdrop-blur-sm">
-                            <div className="bg-white h-full w-[2%] shadow-[0_0_10px_rgba(255,255,255,0.5)] rounded-full"></div>
+                            <div className="bg-white h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (consumedCalories / (profile?.daily_calories_goal || 2000)) * 100)}%` }}></div>
                         </div>
                     </div>
                 </div>
             </header>
 
             <main className="px-6 space-y-6">
-                {/* Workout Button */}
                 <button className="w-full bg-blue-600 text-white p-6 rounded-[2rem] shadow-lg shadow-blue-200 flex items-center justify-between group hover:bg-blue-700 transition-all">
                     <div className="flex items-center gap-4">
                         <div className="bg-white/20 p-3 rounded-2xl text-white">
                             <Dumbbell size={28} />
                         </div>
                         <div className="text-left">
-                            <h3 className="text-xl font-bold">Тренировка</h3>
-                            <p className="text-blue-100 text-sm">Начать активность</p>
+                            <h3 className="text-xl font-bold">Тренування</h3>
+                            <p className="text-blue-100 text-sm">Почати активність</p>
                         </div>
                     </div>
                     <div className="bg-white text-blue-600 p-3 rounded-full group-hover:scale-110 transition-transform">
@@ -396,33 +664,41 @@ const Dashboard = ({ session, profile, onEditProfile }) => {
                 </button>
 
                 <div>
-                    <h2 className="text-xl font-bold text-slate-800 mb-4">Приемы пищи</h2>
+                    <h2 className="text-xl font-bold text-slate-800 mb-4">Прийоми їжі</h2>
                     <div className="grid grid-cols-2 gap-4">
-                        <MealCard title="Завтрак" icon={Sun} calories={0} color="bg-orange-400" bg="bg-orange-400" />
-                        <MealCard title="Обед" icon={Utensils} calories={0} color="bg-emerald-400" bg="bg-emerald-400" />
-                        <MealCard title="Ужин" icon={Moon} calories={0} color="bg-indigo-400" bg="bg-indigo-400" />
-                        <MealCard title="Перекус" icon={Coffee} calories={0} color="bg-pink-400" bg="bg-pink-400" />
+                        <MealCard onClick={() => openFoodModal('breakfast')} title="Сніданок" icon={Sun} calories={mealStats.breakfast} color="bg-orange-400" bg="bg-orange-400" />
+                        <MealCard onClick={() => openFoodModal('lunch')} title="Обід" icon={Utensils} calories={mealStats.lunch} color="bg-emerald-400" bg="bg-emerald-400" />
+                        <MealCard onClick={() => openFoodModal('dinner')} title="Вечеря" icon={Moon} calories={mealStats.dinner} color="bg-indigo-400" bg="bg-indigo-400" />
+                        <MealCard onClick={() => openFoodModal('snack')} title="Перекус" icon={Coffee} calories={mealStats.snack} color="bg-pink-400" bg="bg-pink-400" />
                     </div>
                 </div>
 
                 <div>
-                    <h2 className="text-xl font-bold text-slate-800 mb-4">Параметры</h2>
+                    <h2 className="text-xl font-bold text-slate-800 mb-4">Параметри</h2>
                     <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 flex items-center justify-between">
                         <div className="flex items-center gap-4">
                             <div className="p-4 bg-purple-50 text-purple-500 rounded-2xl"><Scale size={24} /></div>
                             <div>
-                                <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Вес</p>
+                                <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Вага</p>
                                 <p className="text-2xl font-bold text-slate-800">{profile?.weight_kg || '--'} <span className="text-sm text-slate-400 font-normal">кг</span></p>
                             </div>
                         </div>
                     </div>
                 </div>
             </main>
+
+            {showFoodModal && (
+                <FoodModal
+                    session={session}
+                    mealType={selectedMeal}
+                    onClose={() => setShowFoodModal(false)}
+                    onFoodAdded={() => setUpdateTrigger(t => t + 1)}
+                />
+            )}
         </div>
     );
 };
 
-// --- ГЛАВНЫЙ КОНТРОЛЛЕР ---
 function App() {
     const [session, setSession] = useState(null);
     const [role, setRole] = useState(null);
@@ -431,7 +707,7 @@ function App() {
     const [loading, setLoading] = useState(true);
     const [isEditingProfile, setIsEditingProfile] = useState(false);
 
-    const checkUserStatus = async (userId) => {
+    const checkUserStatus = useCallback(async (userId) => {
         const { data: userData } = await supabase.from('users').select('role').eq('user_id', userId).single();
 
         if (userData) {
@@ -441,11 +717,13 @@ function App() {
                 setTrainerApp(appData);
             } else {
                 const { data: profileData } = await supabase.from('user_profiles').select('*').eq('user_id', userId).single();
-                setProfile(profileData);
+                if (profileData) {
+                    setProfile(profileData);
+                }
             }
         }
         setLoading(false);
-    };
+    }, []);
 
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
@@ -461,12 +739,10 @@ function App() {
         });
 
         return () => subscription.unsubscribe();
-    }, []);
+    }, [checkUserStatus]);
 
     const handleBackToRole = async () => {
         setRole(null);
-        // Сбрасываем роль в базе на null, чтобы юзер мог выбрать заново (если это нужно)
-        // Но обычно роль выбирается один раз. Здесь мы просто вернемся в меню.
     };
 
     if (loading) return <div className="h-screen flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin text-emerald-500 w-10 h-10" /></div>;
@@ -475,7 +751,6 @@ function App() {
 
     if (!profile && !trainerApp && (role === 'customer' || !role)) {
         if (!role) return <RoleSelection session={session} onRoleSelected={(r) => { setRole(r); }} />;
-        // Если роль выбрана, но профиля нет -> Анкета
         if (role === 'customer') return <ProfileSetup session={session} onBack={handleBackToRole} onComplete={() => checkUserStatus(session.user.id)} />;
         if (role === 'trainer') return <TrainerVerification session={session} onBack={handleBackToRole} onSubmitted={() => checkUserStatus(session.user.id)} />;
     }
@@ -483,14 +758,13 @@ function App() {
     if (role === 'trainer') {
         if (!trainerApp) return <TrainerVerification session={session} onBack={handleBackToRole} onSubmitted={() => checkUserStatus(session.user.id)} />;
         if (trainerApp.status === 'pending') return <TrainerPending />;
-        return <div className="p-10 text-center">Тренерская панель (В разработке)</div>;
+        return <div className="p-10 text-center">Тренерська панель (В розробці)</div>;
     }
 
     if (isEditingProfile) {
         return <ProfileSetup session={session} initialData={profile} onComplete={() => { setIsEditingProfile(false); checkUserStatus(session.user.id); }} />;
     }
 
-    // Если профиля нет, но роль customer (баг-фикс)
     if (!profile && role === 'customer') {
         return <ProfileSetup session={session} onBack={handleBackToRole} onComplete={() => checkUserStatus(session.user.id)} />;
     }
